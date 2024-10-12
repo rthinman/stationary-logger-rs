@@ -13,11 +13,12 @@
             "chip": "STM32L476JEYx",
             "flashingConfig": {
                 "flashingEnabled": true,
-                "haltAfterReset": true
+                "haltAfterReset": false
             },
             "coreConfigs": [
                 {
                     "coreIndex": 0,
+                    "rttEnabled": true,
                     "programBinary": "target\\thumbv7em-none-eabi\\debug\\${workspaceFolderBasename}"
                 }
             ]

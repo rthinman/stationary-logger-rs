@@ -11,7 +11,7 @@ use {defmt_rtt as _, panic_probe as _};
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_time::{Duration, Timer};
-use fmt::info;
+use fmt::{info, warn};
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
@@ -19,10 +19,10 @@ async fn main(_spawner: Spawner) {
     let mut led = Output::new(p.PB0, Level::High, Speed::Low);
 
     loop {
-        info!("Hello, World!");
+        warn!("Hello, World!");
         led.set_high();
-        Timer::after(Duration::from_millis(500)).await;
+        Timer::after(Duration::from_millis(200)).await;
         led.set_low();
-        Timer::after(Duration::from_millis(500)).await;
+        Timer::after(Duration::from_millis(200)).await;
     }
 }
