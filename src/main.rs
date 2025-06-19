@@ -5,16 +5,21 @@ mod fmt;
 
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
+use crate::fmt::unwrap;
+
 #[cfg(feature = "defmt")]
 use {defmt_rtt as _, panic_probe as _};
 
 use embassy_executor::Spawner;
-use embassy_stm32::exti::{ExtiInput};
-use embassy_stm32::{gpio::{Level, Output, Pull, Speed}, rtc::{DateTime, Rtc, RtcConfig}, time::Hertz, Config};
+use embassy_stm32::{bind_interrupts, exti::ExtiInput, peripherals};
+use embassy_stm32::{gpio::{Level, Output, Pull, Speed}, i2c::{ErrorInterruptHandler, EventInterruptHandler, I2c}, rtc::{DateTime, Rtc, RtcConfig}, time::Hertz, Config};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Channel, Sender};
 use embassy_time::{Duration, Timer};
 use fmt::{info, warn};
+
+const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for a temperature sensor.
+const SENSOR_REGISTER: u8 = 0x00; // Register to read temperature data.
 
 static CHANNEL: Channel<ThreadModeRawMutex, Events, 8> = Channel::new();
 
@@ -72,6 +77,8 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(config);
 
     // GPIOs
+    let mut pwrv_nen = Output::new(p.PA15, Level::High, Speed::Low); // Power enable for the temperature sensor.
+    pwrv_nen.set_low(); // Enable the temperature sensor.
     let mut led = Output::new(p.PB0, Level::High, Speed::Low);
     let mut btn = ExtiInput::new(p.PB5, p.EXTI5, Pull::Up);
 
@@ -82,6 +89,24 @@ async fn main(spawner: Spawner) {
     let mut rtc = Rtc::new(p.RTC, RtcConfig::default());
     rtc.set_daylight_savings(false);
     rtc.set_datetime(now).expect("datetime not set");
+
+    // I2C and temp sensor initialization.
+    bind_interrupts!(struct Irqs {
+        I2C1_EV => EventInterruptHandler<peripherals::I2C1>;
+        I2C1_ER => ErrorInterruptHandler<peripherals::I2C1>;
+    });
+
+    let mut i2c = I2c::new(
+        p.I2C1, 
+        p.PB6, 
+        p.PB7, 
+        Irqs,
+        p.DMA1_CH6,
+        p.DMA1_CH7, 
+        Hertz(400_000),
+        Default::default(),
+    );
+    // let mut temp_sensor = TempSensor::new(i2c, 0x48);
 
     // Spawn the button task
     spawner.spawn(button(btn, CHANNEL.sender())).unwrap();
@@ -95,6 +120,12 @@ async fn main(spawner: Spawner) {
                 info!("Button pressed event received");
                 let then = rtc.now().unwrap();
                 info!("time: {:?}:{:?}", then.minute(), then.second());
+
+                let mut buf = [0u8; 2];
+                unwrap!(i2c.write_read(AMBIENT_ADDRESS, &[SENSOR_REGISTER], &mut buf).await, "Failed to read from temperature sensor");
+                let temp = i16::from_be_bytes(buf);
+                let ftemp: f32 = f32::from(temp) * 0.0078125; // Convert to Celsius
+                info!("Temperature: {} °C", ftemp);
             }
             Events::Button(ButtonEvent::Released) => {
                 info!("Button released event received");
