@@ -9,20 +9,33 @@ use panic_halt as _;
 use {defmt_rtt as _, panic_probe as _};
 
 use embassy_executor::Spawner;
-use embassy_stm32::{gpio::{Level, Output, Speed}, rtc::{DateTime, Rtc, RtcConfig}, time::Hertz, Config};
+use embassy_stm32::exti::{ExtiInput};
+use embassy_stm32::{gpio::{Level, Output, Pull, Speed}, rtc::{DateTime, Rtc, RtcConfig}, time::Hertz, Config};
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::channel::{Channel, Sender};
 use embassy_time::{Duration, Timer};
 use fmt::{info, warn};
 
+static CHANNEL: Channel<ThreadModeRawMutex, Events, 8> = Channel::new();
+
+enum ButtonEvent {
+    Pressed,
+    Released,
+}
+
+enum Events {
+    Button(ButtonEvent),
+    LedBlink,
+}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
 
     // Chip peripheral configuration
     let mut config = Config::default();
     {
         use embassy_stm32::rcc::*;
         use embassy_stm32::rcc::mux::{Adcsel, Clk48sel, I2c1sel};
-use embassy_stm32::gpio::{Input, Pull, AnyPin, ExtiInput};
-use embassy_stm32::exti::ExtiInput as EmbassyExtiInput;
 
         // Adjust the configuration from the default.
         // Default for Config.rcc is hse=None, hsi=false, SAI1,2=None
@@ -60,6 +73,7 @@ use embassy_stm32::exti::ExtiInput as EmbassyExtiInput;
 
     // GPIOs
     let mut led = Output::new(p.PB0, Level::High, Speed::Low);
+    let mut btn = ExtiInput::new(p.PB5, p.EXTI5, Pull::Up);
 
     // RTC, from embassy example, but not using the chrono crate.
     let now: DateTime = DateTime::from(
@@ -69,19 +83,53 @@ use embassy_stm32::exti::ExtiInput as EmbassyExtiInput;
     rtc.set_daylight_savings(false);
     rtc.set_datetime(now).expect("datetime not set");
 
-    let mut counter: usize = 0;
+    // Spawn the button task
+    spawner.spawn(button(btn, CHANNEL.sender())).unwrap();
+    spawner.spawn(led_blink(led)).unwrap();
+
+    warn!("Starting main loop");
 
     loop {
-        warn!("Hello, World!");
+        match CHANNEL.receive().await {
+            Events::Button(ButtonEvent::Pressed) => {
+                info!("Button pressed event received");
+                let then = rtc.now().unwrap();
+                info!("time: {:?}:{:?}", then.minute(), then.second());
+            }
+            Events::Button(ButtonEvent::Released) => {
+                info!("Button released event received");
+            }
+            Events::LedBlink => {
+                info!("LED blink event received");
+            }
+        }
+
+    }
+}
+
+#[embassy_executor::task]
+async fn button(mut btn: ExtiInput<'static>, msg: Sender<'static, ThreadModeRawMutex, Events, 8>) {
+    loop {
+        btn.wait_for_falling_edge().await;
+        info!("Button pressed!");
+        msg.send(Events::Button(ButtonEvent::Pressed)).await;
+        // Debounce delay
+        Timer::after(Duration::from_millis(50)).await;
+        // Wait for release (rising edge)
+        btn.wait_for_rising_edge().await;
+        info!("Button released!");
+        msg.send(Events::Button(ButtonEvent::Released)).await;
+        // Debounce delay
+        Timer::after(Duration::from_millis(50)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn led_blink(mut led: Output<'static>) {
+    loop {
         led.set_high();
         Timer::after(Duration::from_millis(500)).await;
         led.set_low();
         Timer::after(Duration::from_millis(500)).await;
-
-        counter += 1;
-        if counter % 10 == 0 {
-            let then = rtc.now().unwrap();
-            info!("time: {:?}:{:?}", then.minute(), then.second());
-        }
     }
 }
