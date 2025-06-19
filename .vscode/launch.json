@@ -9,6 +9,7 @@
             "request": "launch",
             "name": "probe-rs Test",
             "cwd": "${workspaceFolder}",
+            "preLaunchTask": "${defaultBuildTask}",
             "connectUnderReset": false,
             "chip": "STM32L476JEYx",
             "flashingConfig": {
