@@ -15,12 +15,13 @@ use embassy_stm32::{bind_interrupts, exti::ExtiInput, peripherals};
 use embassy_stm32::{gpio::{Level, Output, Pull, Speed}, i2c::{ErrorInterruptHandler, EventInterruptHandler, I2c}, rtc::{DateTime, Rtc, RtcConfig}, time::Hertz, Config};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Channel, Sender};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Ticker, Timer};
 use fmt::{info, warn};
 
 const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for a temperature sensor.
 const SENSOR_REGISTER: u8 = 0x00; // Register to read temperature data.
 
+// Communicate events between tasks using a channel.
 static CHANNEL: Channel<ThreadModeRawMutex, Events, 8> = Channel::new();
 
 enum ButtonEvent {
@@ -30,7 +31,7 @@ enum ButtonEvent {
 
 enum Events {
     Button(ButtonEvent),
-    LedBlink,
+    TempReading(f32),
 }
 
 struct TempSensor<I2C> {
@@ -134,6 +135,7 @@ async fn main(spawner: Spawner) {
     // Spawn the button task
     spawner.spawn(button(btn, CHANNEL.sender())).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
+    spawner.spawn(get_temperature(temp_sensor, CHANNEL.sender())).unwrap();
 
     warn!("Starting main loop");
 
@@ -143,17 +145,12 @@ async fn main(spawner: Spawner) {
                 info!("Button pressed event received");
                 let then = rtc.now().unwrap();
                 info!("time: {:?}:{:?}", then.minute(), then.second());
-
-                match temp_sensor.read_temperature_celsius().await {
-                    Ok(ftemp) => info!("Temperature: {} °C", ftemp),
-                    Err(_) => warn!("Failed to read from temperature sensor"),
-                }
             }
             Events::Button(ButtonEvent::Released) => {
                 info!("Button released event received");
             }
-            Events::TempReading => {
-                info!("LED blink event received");
+            Events::TempReading(temperature) => {
+                info!("Temperature: {} °C", temperature);
             }
         }
 
@@ -184,5 +181,23 @@ async fn led_blink(mut led: Output<'static>) {
         Timer::after(Duration::from_millis(500)).await;
         led.set_low();
         Timer::after(Duration::from_millis(500)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn get_temperature(
+    mut temp_sensor: TempSensor<I2c<'static, embassy_stm32::mode::Async>>,
+    msg: Sender<'static, ThreadModeRawMutex, Events, 8>,
+) {
+    let mut ticker = Ticker::every(Duration::from_secs(10)); // Read every 10 seconds
+    loop {
+        match temp_sensor.read_temperature_celsius().await {
+            Ok(ftemp) => {
+                // info!("Temperature: {} °C", ftemp);
+                msg.send(Events::TempReading(ftemp)).await;
+            }
+            Err(_) => warn!("Failed to read from temperature sensor"),
+        }
+        ticker.next().await;
     }
 }
