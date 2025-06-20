@@ -33,6 +33,29 @@ enum Events {
     LedBlink,
 }
 
+struct TempSensor<I2C> {
+    i2c: I2C,
+    address: u8,
+}
+
+impl<I2C> TempSensor<I2C> {
+    pub fn new(i2c: I2C, address: u8) -> Self {
+        Self { i2c, address }
+    }
+}
+
+impl<I2C> TempSensor<I2C>
+where
+    I2C: embedded_hal_async::i2c::I2c,
+{
+    pub async fn read_temperature_celsius(&mut self) -> Result<f32, &str> {
+        let mut buf = [0u8; 2];
+        self.i2c.write_read(self.address, &[SENSOR_REGISTER], &mut buf).await.or(Err("Failed to read from temperature sensor"))?;
+        let temp = i16::from_be_bytes(buf);
+        Ok(f32::from(temp) * 0.0078125)
+    }
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
 
@@ -106,7 +129,7 @@ async fn main(spawner: Spawner) {
         Hertz(400_000),
         Default::default(),
     );
-    // let mut temp_sensor = TempSensor::new(i2c, 0x48);
+    let mut temp_sensor = TempSensor::new(i2c, AMBIENT_ADDRESS);
 
     // Spawn the button task
     spawner.spawn(button(btn, CHANNEL.sender())).unwrap();
@@ -121,16 +144,15 @@ async fn main(spawner: Spawner) {
                 let then = rtc.now().unwrap();
                 info!("time: {:?}:{:?}", then.minute(), then.second());
 
-                let mut buf = [0u8; 2];
-                unwrap!(i2c.write_read(AMBIENT_ADDRESS, &[SENSOR_REGISTER], &mut buf).await, "Failed to read from temperature sensor");
-                let temp = i16::from_be_bytes(buf);
-                let ftemp: f32 = f32::from(temp) * 0.0078125; // Convert to Celsius
-                info!("Temperature: {} °C", ftemp);
+                match temp_sensor.read_temperature_celsius().await {
+                    Ok(ftemp) => info!("Temperature: {} °C", ftemp),
+                    Err(_) => warn!("Failed to read from temperature sensor"),
+                }
             }
             Events::Button(ButtonEvent::Released) => {
                 info!("Button released event received");
             }
-            Events::LedBlink => {
+            Events::TempReading => {
                 info!("LED blink event received");
             }
         }

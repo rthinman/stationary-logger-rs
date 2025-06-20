@@ -17,6 +17,7 @@ embassy-time = { version = "0.4", features = ["tick-hz-32_768"] }
 embassy-stm32 = {version = "0.2", features =  ["defmt", "exti", "time-driver-any", "stm32l476je", "memory-x"]}
 panic-halt = "1"
 panic-probe = { version = "1", features = ["print-defmt"], optional = true }
+embedded-hal-async = "1.0.0"
 
 [[bin]]
 name = "stationary-logger-rs"

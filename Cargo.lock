@@ -720,6 +720,7 @@ dependencies = [
  "embassy-stm32",
  "embassy-sync 0.7.0",
  "embassy-time",
+ "embedded-hal-async",
  "panic-halt",
  "panic-probe",
 ]
