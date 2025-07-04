@@ -18,6 +18,7 @@ embassy-stm32 = {version = "0.2", features =  ["defmt", "exti", "time-driver-any
 panic-halt = "1"
 panic-probe = { version = "1", features = ["print-defmt"], optional = true }
 embedded-hal-async = "1.0.0"
+arrayvec = { version = "0.7.6", default-features = false } # To disable std.
 
 [[bin]]
 name = "stationary-logger-rs"

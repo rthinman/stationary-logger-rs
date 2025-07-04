@@ -4,7 +4,9 @@
 mod fmt;
 
 use core::f32::consts;
+use core::fmt::Write;
 
+use arrayvec::ArrayString;
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
 use crate::fmt::unwrap;
@@ -120,7 +122,7 @@ impl Timestamp {
         let days = seconds / 86400; // Because there are 86400 seconds in a day.
         let seconds_of_day = seconds - days * 86400; // = seconds % 86400
         let hours = seconds_of_day / 3600;
-        let remaining_seconds = hours * 3600;
+        let remaining_seconds = seconds_of_day - hours * 3600;
         let minutes = remaining_seconds / 60;
         let remaining_seconds = remaining_seconds - minutes * 60;
 
@@ -198,6 +200,38 @@ impl Timestamp {
         Some(days_since_epoch * 86400 + hour * 3600 + minute * 60 + second)
     }
 
+    /// Convert seconds to an ISO 8601 Duration string.
+    pub fn seconds_to_iso8601_duration(seconds: u32) -> ArrayString<32> {
+        // Convert seconds to days, hours, minutes, and remaining seconds.
+        let (days, hours, minutes, remaining_seconds) = Timestamp::seconds_to_dhms(seconds);
+        // Format the string according to ISO 8601 duration format.
+        let mut result = ArrayString::<32>::new();
+        if days > 0 {
+            write!(&mut result, "P{}D", days).expect("can't write");
+        } else {
+            result.push_str("P0D");
+        }
+        if hours > 0 || minutes > 0 || remaining_seconds > 0 {
+            write!(&mut result, "T{}H{}M{}S", hours, minutes, remaining_seconds).expect("can't write");
+        } else {
+            result.push_str("T0S");
+        }
+        result
+    }
+
+    pub fn parse_duration(input: &str) -> Option<(u32, u32, u32, u32)> {
+        let input = input.strip_prefix('P')?;
+        let (days_str, rest) = input.split_once("DT")?;
+        let (hours_str, rest) = rest.split_once('H')?;
+        let (minutes_str, rest) = rest.split_once('M')?;
+        let seconds_str = rest.strip_suffix('S')?;
+        Some((
+            days_str.parse().ok()?,
+            hours_str.parse().ok()?,
+            minutes_str.parse().ok()?,
+            seconds_str.parse().ok()?)
+        )
+    }
 }
 
 
@@ -257,6 +291,16 @@ async fn main(spawner: Spawner) {
     let dt = Timestamp::seconds_to_datetime(86400);
     info!("should be march 2 2000: {}-{:02}-{:02} {:02}:{:02}:{:02}", 
         dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute(), dt.second());
+
+    // Test converting ISO 8601 duration to seconds and back.
+    let duration_str = "P1DT2H3M4S"; // 1 day, 2 hours, 3 minutes, 4 seconds
+    let (days, hours, minutes, seconds) = Timestamp::parse_duration(duration_str).expect("Failed to parse duration");
+    info!("Parsed duration: {} days, {} hours, {} minutes, {} seconds", days, hours, minutes, seconds);
+    let total_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds;
+    assert_eq!(total_seconds, 93784, "Total seconds should be 93784");
+    info!("Total seconds: {}", total_seconds);
+    let iso_duration = Timestamp::seconds_to_iso8601_duration(total_seconds);
+    info!("ISO 8601 Duration: {}", iso_duration.as_str());
 
     let reconverted_seconds = Timestamp::datetime_to_seconds(dt).expect("Failed to convert DateTime to seconds");
     info!("Reconverted seconds: {}", reconverted_seconds);
@@ -318,6 +362,7 @@ async fn main(spawner: Spawner) {
             }
             Events::TempReading(temperature) => {
                 info!("Time: {}, Temperature: {} °C", timestamp.get_uptime_seconds(), temperature);
+                info!("{=str}", Timestamp::seconds_to_iso8601_duration(timestamp.get_uptime_seconds()));
             }
         }
 
