@@ -21,8 +21,10 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Channel, Sender};
 use embassy_time::{Duration, Ticker, Timer};
 use fmt::{info, warn};
+use shared_bus::{BusManagerSimple, I2cProxy};
 
-const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for a temperature sensor.
+const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for onboard temperature sensor.
+const VACCINE_ADDRESS: u8 = 0x44; // I2C address for offboard temperature sensor.
 const SENSOR_REGISTER: u8 = 0x00; // Register to read temperature data.
 
 // Communicate events between tasks using a channel.
@@ -234,6 +236,10 @@ impl Timestamp {
     }
 }
 
+// Only the bus manager needs to be static for 'static lifetimes
+use core::mem::MaybeUninit;
+
+static mut BUS: MaybeUninit<BusManagerSimple<I2c<'static, embassy_stm32::mode::Async>>> = MaybeUninit::uninit();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -331,7 +337,8 @@ async fn main(spawner: Spawner) {
         I2C1_ER => ErrorInterruptHandler<peripherals::I2C1>;
     });
 
-    let mut i2c = I2c::new(
+    // Create the I2C peripheral and pass directly to BusManagerSimple with NullMutex as type param
+    let i2c: I2c<'static, embassy_stm32::mode::Async> = I2c::new(
         p.I2C1, 
         p.PB6, 
         p.PB7, 
@@ -341,12 +348,19 @@ async fn main(spawner: Spawner) {
         Hertz(400_000),
         Default::default(),
     );
-    let mut temp_sensor = TempSensor::new(i2c, AMBIENT_ADDRESS);
+    unsafe {
+        BUS.write(BusManagerSimple::new(i2c));
+    }
+    let bus: &'static BusManagerSimple<I2c<'static, embassy_stm32::mode::Async>> = unsafe { BUS.assume_init_ref() };
+    let proxy1 = bus.acquire_i2c();
+    let tamb_sensor = TempSensor::new(proxy1, AMBIENT_ADDRESS);
+    let proxy2 = bus.acquire_i2c();
+    let vaccine_sensor = TempSensor::new(proxy2, VACCINE_ADDRESS);
 
     // Spawn the button task
     spawner.spawn(button(btn, CHANNEL.sender())).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
-    spawner.spawn(get_temperature(temp_sensor, CHANNEL.sender())).unwrap();
+    spawner.spawn(get_both_temperatures(tamb_sensor, vaccine_sensor, CHANNEL.sender())).unwrap();
 
     warn!("Starting main loop");
 
@@ -397,18 +411,24 @@ async fn led_blink(mut led: Output<'static>) {
 }
 
 #[embassy_executor::task]
-async fn get_temperature(
-    mut temp_sensor: TempSensor<I2c<'static, embassy_stm32::mode::Async>>,
+async fn get_both_temperatures(
+    mut tamb_sensor: TempSensor<I2cProxy<'static, I2c<'static, embassy_stm32::mode::Async>>>,
+    mut vaccine_sensor: TempSensor<I2cProxy<'static, I2c<'static, embassy_stm32::mode::Async>>>,
     msg: Sender<'static, ThreadModeRawMutex, Events, 8>,
 ) {
     let mut ticker = Ticker::every(Duration::from_secs(10)); // Read every 10 seconds
     loop {
-        match temp_sensor.read_temperature_celsius().await {
-            Ok(ftemp) => {
-                // info!("Temperature: {} °C", ftemp);
-                msg.send(Events::TempReading(ftemp)).await;
-            }
-            Err(_) => warn!("Failed to read from temperature sensor"),
+        if let Ok(tamb) = tamb_sensor.read_temperature_celsius().await {
+            info!("Ambient temperature: {} °C", tamb);
+            msg.send(Events::TempReading(tamb)).await;
+        } else {
+            warn!("Failed to read from ambient temperature sensor");
+        }
+        if let Ok(vaccine) = vaccine_sensor.read_temperature_celsius().await {
+            info!("Vaccine temperature: {} °C", vaccine);
+            msg.send(Events::TempReading(vaccine)).await;
+        } else {
+            warn!("Failed to read from vaccine temperature sensor");
         }
         ticker.next().await;
     }
