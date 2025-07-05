@@ -17,12 +17,19 @@ use {defmt_rtt as _, panic_probe as _};
 use embassy_executor::Spawner;
 use embassy_stm32::{bind_interrupts, exti::ExtiInput, peripherals};
 use embassy_stm32::{gpio::{Level, Output, Pull, Speed}, i2c::{ErrorInterruptHandler, EventInterruptHandler, I2c}, rtc::{DateTime, Rtc, RtcConfig}, time::Hertz, Config};
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::{Channel, Sender};
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Ticker, Timer};
+use embedded_hal_async::i2c::I2c as AsyncI2c;
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+use static_cell::StaticCell;
+// use embedded_hal_bus::i2c::RefCellDevice;
+
 use fmt::{info, warn};
 
-const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for a temperature sensor.
+const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for ambient temperature sensor.
+const VACCINE_ADDRESS: u8 = 0x44; // I2C address for vaccine temperature sensor.
 const SENSOR_REGISTER: u8 = 0x00; // Register to read temperature data.
 
 // Communicate events between tasks using a channel.
@@ -51,7 +58,7 @@ impl<I2C> TempSensor<I2C> {
 
 impl<I2C> TempSensor<I2C>
 where
-    I2C: embedded_hal_async::i2c::I2c,
+    I2C: AsyncI2c,
 {
     pub async fn read_temperature_celsius(&mut self) -> Result<f32, &str> {
         let mut buf = [0u8; 2];
@@ -341,12 +348,30 @@ async fn main(spawner: Spawner) {
         Hertz(400_000),
         Default::default(),
     );
-    let mut temp_sensor = TempSensor::new(i2c, AMBIENT_ADDRESS);
+
+    // let wrapped_i2c = Mutex::new(i2c);
+
+
+    // #[embassy_embedded_hal::shared_bus::singleton]
+    static BUS: StaticCell<Mutex<NoopRawMutex, I2c<'static, embassy_stm32::mode::Async>>> = StaticCell::new();
+    let i2c_bus = BUS.init(Mutex::new(i2c));
+    let i2c_dev_a = I2cDevice::new(i2c_bus);
+    let i2c_dev_b = I2cDevice::new(i2c_bus);
+
+    //embassy_embedded_hal::shared_bus::BusMutex<embassy_embedded_hal::shared_bus::NoopRawMutex, I2c<'static, embassy_stm32::mode::Async>> = embassy_embedded_hal::shared_bus::BusMutex::new(i2c);
+    // let i2c_dev_a = I2cDevice::new(&BUS);
+    // let i2c_dev_b = I2cDevice::new(&BUS);
+    // let i2c_ref_cell = core::cell::RefCell::new(i2c);
+    // let tamb_bus = RefCellDevice::new(&i2c_ref_cell);
+    // let tvc_bus = RefCellDevice::new(&i2c_ref_cell);
+
+    let mut tamb_sensor = TempSensor::new(i2c_dev_a, AMBIENT_ADDRESS);
+    let mut tvc_sensor = TempSensor::new(i2c_dev_b, VACCINE_ADDRESS);
 
     // Spawn the button task
     spawner.spawn(button(btn, CHANNEL.sender())).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
-    spawner.spawn(get_temperature(temp_sensor, CHANNEL.sender())).unwrap();
+    spawner.spawn(get_temperature(tamb_sensor, tvc_sensor, CHANNEL.sender())).unwrap();
 
     warn!("Starting main loop");
 
@@ -398,12 +423,13 @@ async fn led_blink(mut led: Output<'static>) {
 
 #[embassy_executor::task]
 async fn get_temperature(
-    mut temp_sensor: TempSensor<I2c<'static, embassy_stm32::mode::Async>>,
+    mut tamb_sensor: TempSensor<embedded_hal_bus::i2c::RefCellDevice<'static, embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async>>>, //TempSensor<I2c<'static, embassy_stm32::mode::Async>>,
+    mut tvc_sensor: TempSensor<embedded_hal_bus::i2c::RefCellDevice<'static, embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async>>>, //TempSensor<I2c<'static, embassy_stm32::mode::Async>>,
     msg: Sender<'static, ThreadModeRawMutex, Events, 8>,
 ) {
     let mut ticker = Ticker::every(Duration::from_secs(10)); // Read every 10 seconds
     loop {
-        match temp_sensor.read_temperature_celsius().await {
+        match tamb_sensor.read_temperature_celsius().await {
             Ok(ftemp) => {
                 // info!("Temperature: {} °C", ftemp);
                 msg.send(Events::TempReading(ftemp)).await;

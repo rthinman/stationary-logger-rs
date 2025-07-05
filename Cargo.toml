@@ -19,6 +19,9 @@ panic-halt = "1"
 panic-probe = { version = "1", features = ["print-defmt"], optional = true }
 embedded-hal-async = "1.0.0"
 arrayvec = { version = "0.7.6", default-features = false } # To disable std.
+embedded-hal-bus = { version = "0.3.0", features = ["async"]}
+embassy-embedded-hal = { version = "0.3.0", features = ["defmt"]}
+static_cell = "2.1.1"
 
 [[bin]]
 name = "stationary-logger-rs"
