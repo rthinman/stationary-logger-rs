@@ -22,8 +22,10 @@ use embassy_sync::channel::{Channel, Sender};
 use embassy_time::{Duration, Ticker, Timer};
 use fmt::{info, warn};
 
-const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for a temperature sensor.
+const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for ambient temperature sensor.
+const VACCINE_ADDRESS: u8 = 0x44; // I2C address for vaccine temperature sensor.
 const SENSOR_REGISTER: u8 = 0x00; // Register to read temperature data.
+const SENSOR_CONVERSION_TIME: Duration = Duration::from_millis(51); // Time to wait for sensor conversion.
 
 // Communicate events between tasks using a channel.
 static CHANNEL: Channel<ThreadModeRawMutex, Events, 8> = Channel::new();
@@ -35,29 +37,36 @@ enum ButtonEvent {
 
 enum Events {
     Button(ButtonEvent),
-    TempReading(f32),
+    TempReading((f32, f32)), // (ambient temperature, vaccine temperature)
 }
 
-struct TempSensor<I2C> {
+struct DualTempSensor<I2C> {
     i2c: I2C,
-    address: u8,
+    amb_address: u8,
+    vax_address: u8,
+    enable_bar: Output<'static>,
 }
 
-impl<I2C> TempSensor<I2C> {
-    pub fn new(i2c: I2C, address: u8) -> Self {
-        Self { i2c, address }
+impl<I2C> DualTempSensor<I2C> {
+    pub fn new(i2c: I2C, amb_address: u8, vax_address: u8, enable_bar: Output<'static>) -> Self {
+        Self { i2c, amb_address, vax_address, enable_bar }
     }
 }
 
-impl<I2C> TempSensor<I2C>
+impl<I2C> DualTempSensor<I2C>
 where
     I2C: embedded_hal_async::i2c::I2c,
 {
-    pub async fn read_temperature_celsius(&mut self) -> Result<f32, &str> {
+    pub async fn read_temperature_celsius(&mut self) -> Result<(f32, f32), &str> {
+        self.enable_bar.set_low(); // Enable the temperature sensor.
+        Timer::after(SENSOR_CONVERSION_TIME).await; // Wait for sensor to stabilize.
         let mut buf = [0u8; 2];
-        self.i2c.write_read(self.address, &[SENSOR_REGISTER], &mut buf).await.or(Err("Failed to read from temperature sensor"))?;
-        let temp = i16::from_be_bytes(buf);
-        Ok(f32::from(temp) * 0.0078125)
+        self.i2c.write_read(self.amb_address, &[SENSOR_REGISTER], &mut buf).await.or(Err("Failed to read from temperature sensor"))?;
+        let amb_temp = i16::from_be_bytes(buf);
+        self.i2c.write_read(self.vax_address, &[SENSOR_REGISTER], &mut buf).await.or(Err("Failed to read from temperature sensor"))?;
+        let vax_temp = i16::from_be_bytes(buf);
+        self.enable_bar.set_high(); // Disable the temperature sensor.
+        Ok((f32::from(amb_temp) * 0.0078125, f32::from(vax_temp) * 0.0078125)) // Convert to Celsius
     }
 }
 
@@ -341,7 +350,7 @@ async fn main(spawner: Spawner) {
         Hertz(400_000),
         Default::default(),
     );
-    let mut temp_sensor = TempSensor::new(i2c, AMBIENT_ADDRESS);
+    let mut temp_sensor = DualTempSensor::new(i2c, AMBIENT_ADDRESS, VACCINE_ADDRESS, pwrv_nen);
 
     // Spawn the button task
     spawner.spawn(button(btn, CHANNEL.sender())).unwrap();
@@ -361,7 +370,7 @@ async fn main(spawner: Spawner) {
                 info!("Button released event received");
             }
             Events::TempReading(temperature) => {
-                info!("Time: {}, Temperature: {} °C", timestamp.get_uptime_seconds(), temperature);
+                info!("Time: {}, TAMB: {} °C, TVC: {} °C", timestamp.get_uptime_seconds(), temperature.0, temperature.1);
                 info!("{=str}", Timestamp::seconds_to_iso8601_duration(timestamp.get_uptime_seconds()));
             }
         }
@@ -398,7 +407,7 @@ async fn led_blink(mut led: Output<'static>) {
 
 #[embassy_executor::task]
 async fn get_temperature(
-    mut temp_sensor: TempSensor<I2c<'static, embassy_stm32::mode::Async>>,
+    mut temp_sensor: DualTempSensor<I2c<'static, embassy_stm32::mode::Async>>,
     msg: Sender<'static, ThreadModeRawMutex, Events, 8>,
 ) {
     let mut ticker = Ticker::every(Duration::from_secs(10)); // Read every 10 seconds
