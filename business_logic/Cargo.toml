@@ -1,0 +1,9 @@
+# This file was automatically generated.
+
+[package]
+edition = "2024"
+name = "business_logic"
+version = "0.1.0"
+
+[dependencies]
+embedded-hal-async = "1.0.0"
