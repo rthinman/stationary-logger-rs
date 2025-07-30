@@ -2,16 +2,23 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"type": "cargo",
-			"command": "build",
-			"problemMatcher": [
-				"$rustc"
-			],
+			"label": "Test business_logic (host)",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["test", "-p", "business_logic"],
+			"group": "test",
+			"problemMatcher": ["$rustc"]
+		},
+		{
+			"label": "Build hardware_main (MCU)",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["build", "-p", "hardware_main", "--target", "thumbv7em-none-eabi"],
 			"group": {
 				"kind": "build",
 				"isDefault": true
 			},
-			"label": "rust: cargo build",
+			"problemMatcher": ["$rustc"],
 			"options": {
 				"env": {
 					"DEFMT_LOG": "trace"
