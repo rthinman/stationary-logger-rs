@@ -110,6 +110,14 @@ impl Rtclock {
         Rtclock::datetime_to_seconds(now).expect("Failed to convert datetime to seconds")
     }
 
+    pub fn get_timestamp(&self) -> Timestamp {
+        // Get the current time in seconds since the epoch.
+        let now = self.rtc.now().unwrap();
+        // Convert to seconds since the epoch (0, 3, 1).
+        let seconds = Rtclock::datetime_to_seconds(now).expect("Failed to convert datetime to seconds");
+        Timestamp { seconds }
+    }
+
     /// Get RTCWake, the value of RELT at the last "brownout" event.
     pub fn get_rtcw(&self) -> u32 {
         self.rtcw
@@ -127,7 +135,8 @@ impl Rtclock {
     pub fn seconds_to_datetime(seconds: u32) -> DateTime {
         // Get the total number of days represented, plus the time of day.
         // A u32 can hold up to 49,710 days, which is about 136 years.
-        let (days, hour, minute, second) = Timestamp::seconds_to_dhms(seconds);
+        let ts = Timestamp { seconds };
+        let (days, hour, minute, second) = ts.to_dhms();
 
         // Calculate the Julian date from the number of days, since computational epoch
         // March 1, 0000.
@@ -261,7 +270,8 @@ async fn main(spawner: Spawner) {
     let total_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds;
     assert_eq!(total_seconds, 93784, "Total seconds should be 93784");
     info!("Total seconds: {}", total_seconds);
-    let iso_duration = Timestamp::seconds_to_iso8601_duration(total_seconds);
+    let ts = Timestamp { seconds: total_seconds };
+    let iso_duration = ts.create_iso8601_str();
     info!("ISO 8601 Duration: {}", iso_duration.as_str());
 
     let reconverted_seconds = Rtclock::datetime_to_seconds(dt).expect("Failed to convert DateTime to seconds");
@@ -276,7 +286,7 @@ async fn main(spawner: Spawner) {
         // RTC initialization
     let mut rtc = Rtc::new(p.RTC, RtcConfig::default());
     rtc.set_daylight_savings(false);
-    let timestamp = if Rtclock::is_running(&rtc) {
+    let rt_clock = if Rtclock::is_running(&rtc) {
         info!("RTC is running, using existing RTCW value...");
         Rtclock::from_running(rtc)
     } else {
@@ -323,8 +333,10 @@ async fn main(spawner: Spawner) {
                 info!("Button released event received");
             }
             Events::TempReading(temperature) => {
-                info!("Time: {}, TAMB: {} °C, TVC: {} °C", timestamp.get_uptime_seconds(), temperature.0, temperature.1);
-                info!("{=str}", Timestamp::seconds_to_iso8601_duration(timestamp.get_uptime_seconds()));
+                let ts = rt_clock.get_timestamp();
+                info!("Time: {}, TAMB: {} °C, TVC: {} °C", ts.seconds, temperature.0, temperature.1);
+                let ts = rt_clock.get_timestamp();
+                info!("{=str}", ts.create_iso8601_str());
             }
         }
 

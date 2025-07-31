@@ -1,12 +1,18 @@
 use arrayvec::ArrayString;
 use core::fmt::Write;
 
-pub struct Timestamp;
+// TODO: implement Format for Timestamp
+
+/// Represents a timestamp in seconds since the epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timestamp {
+    pub seconds: u32,
+}
 
 impl Timestamp {
-    /// Convert seconds to an ISO 8601 Duration string.
-    pub fn seconds_to_iso8601_duration(seconds: u32) -> ArrayString<32> {
-        let (days, hours, minutes, remaining_seconds) = Self::seconds_to_dhms(seconds);
+    /// Create an an ISO 8601 Duration string.
+    pub fn create_iso8601_str(&self) -> ArrayString<32> {
+        let (days, hours, minutes, remaining_seconds) = self.to_dhms();
         let mut result = ArrayString::<32>::new();
         if days > 0 {
             write!(&mut result, "P{}D", days).expect("can't write");
@@ -21,6 +27,18 @@ impl Timestamp {
         result
     }
 
+    /// Converts seconds since the epoch to days, hours, minutes, and seconds.
+    pub fn to_dhms(&self) -> (u32, u32, u32, u32) {
+        let days = self.seconds / 86400;
+        let seconds_of_day = self.seconds - days * 86400;
+        let hours = seconds_of_day / 3600;
+        let remaining_seconds = seconds_of_day - hours * 3600;
+        let minutes = remaining_seconds / 60;
+        let remaining_seconds = remaining_seconds - minutes * 60;
+        (days, hours, minutes, remaining_seconds)
+    }
+
+    /// Parses an ISO 8601 Duration string and returns the number of days, hours, minutes, and seconds.
     pub fn parse_duration(input: &str) -> Option<(u32, u32, u32, u32)> {
         let input = input.strip_prefix('P')?;
         let (days_str, rest) = input.split_once("DT")?;
@@ -35,13 +53,4 @@ impl Timestamp {
         ))
     }
 
-    pub fn seconds_to_dhms(seconds: u32) -> (u32, u32, u32, u32) {
-        let days = seconds / 86400;
-        let seconds_of_day = seconds - days * 86400;
-        let hours = seconds_of_day / 3600;
-        let remaining_seconds = seconds_of_day - hours * 3600;
-        let minutes = remaining_seconds / 60;
-        let remaining_seconds = remaining_seconds - minutes * 60;
-        (days, hours, minutes, remaining_seconds)
-    }
 }
