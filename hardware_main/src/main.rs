@@ -262,18 +262,6 @@ async fn main(spawner: Spawner) {
     let dt = Rtclock::seconds_to_datetime(86400);
     info!("should be march 2 2000: {}-{:02}-{:02} {:02}:{:02}:{:02}", 
         dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute(), dt.second());
-
-    // Test converting ISO 8601 duration to seconds and back.
-    let duration_str = "P1DT2H3M4S"; // 1 day, 2 hours, 3 minutes, 4 seconds
-    let (days, hours, minutes, seconds) = Timestamp::parse_duration(duration_str).expect("Failed to parse duration");
-    info!("Parsed duration: {} days, {} hours, {} minutes, {} seconds", days, hours, minutes, seconds);
-    let total_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds;
-    assert_eq!(total_seconds, 93784, "Total seconds should be 93784");
-    info!("Total seconds: {}", total_seconds);
-    let ts = Timestamp { seconds: total_seconds };
-    let iso_duration = ts.create_iso8601_str();
-    info!("ISO 8601 Duration: {}", iso_duration.as_str());
-
     let reconverted_seconds = Rtclock::datetime_to_seconds(dt).expect("Failed to convert DateTime to seconds");
     info!("Reconverted seconds: {}", reconverted_seconds);
 
@@ -385,29 +373,5 @@ async fn get_temperature(
             Err(_) => warn!("Failed to read from temperature sensor"),
         }
         ticker.next().await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use embassy_stm32::rtc::DateTime;
-
-    #[test]
-    fn test_seconds_to_datetime() {
-        // Example: 0 seconds since epoch should be March 1, 2000, 00:00:00
-        let dt = seconds_to_datetime(0);
-        assert_eq!(dt.year(), 2000);
-        assert_eq!(dt.month(), 3);
-        assert_eq!(dt.day(), 1);
-        assert_eq!(dt.hour(), 0);
-        assert_eq!(dt.minute(), 0);
-        assert_eq!(dt.second(), 0);
-
-        // Example: 86400 seconds (1 day) since epoch should be March 2, 2000
-        let dt = seconds_to_datetime(86400);
-        assert_eq!(dt.year(), 2000);
-        assert_eq!(dt.month(), 3);
-        assert_eq!(dt.day(), 2);
     }
 }

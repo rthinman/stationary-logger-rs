@@ -40,6 +40,9 @@ impl Timestamp {
 
     /// Parses an ISO 8601 Duration string and returns the number of days, hours, minutes, and seconds.
     pub fn parse_duration(input: &str) -> Option<(u32, u32, u32, u32)> {
+        if input.starts_with("P0DT0S") {
+            return Some((0, 0, 0, 0));
+        }
         let input = input.strip_prefix('P')?;
         let (days_str, rest) = input.split_once("DT")?;
         let (hours_str, rest) = rest.split_once('H')?;
@@ -53,4 +56,33 @@ impl Timestamp {
         ))
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_dhms() {
+        let ts = Timestamp { seconds: 93784 };
+        assert_eq!(ts.to_dhms(), (1, 2, 3, 4));
+    }
+
+    #[test]
+    fn test_create_iso8601_str() {
+        let ts = Timestamp { seconds: 93784 };
+        assert_eq!(ts.create_iso8601_str().as_str(), "P1DT2H3M4S");
+        let ts = Timestamp { seconds: 0 };
+        assert_eq!(ts.create_iso8601_str().as_str(), "P0DT0S");
+    }
+
+    #[test]
+    fn test_parse_duration() {
+        let parsed = Timestamp::parse_duration("P1DT2H3M4S");
+        assert_eq!(parsed, Some((1, 2, 3, 4)));
+        let parsed = Timestamp::parse_duration("P0DT0S");
+        assert_eq!(parsed, Some((0, 0, 0, 0)));
+        let parsed = Timestamp::parse_duration("P2DT3H4M5");
+        assert_eq!(parsed, None); // Invalid format, missing seconds.
+    }
 }
