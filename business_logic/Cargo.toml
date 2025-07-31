@@ -7,3 +7,4 @@ version = "0.1.0"
 
 [dependencies]
 embedded-hal-async = "1.0.0"
+arrayvec = { version = "0.7.6", default-features = false } # To disable std.

@@ -78,6 +78,7 @@ dependencies = [
 name = "business_logic"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "embedded-hal-async",
 ]
 

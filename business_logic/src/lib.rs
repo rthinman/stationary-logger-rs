@@ -15,6 +15,8 @@ pub fn process_data(input: &str) -> Status {
     }
 }
 
+pub mod timestamp;
+
 #[cfg(test)]
 mod tests {
     use super::*;

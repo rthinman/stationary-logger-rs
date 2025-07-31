@@ -10,6 +10,7 @@ use arrayvec::ArrayString;
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
 use crate::fmt::unwrap;
+use business_logic::timestamp::Timestamp;
 
 #[cfg(feature = "defmt")]
 use {defmt_rtt as _, panic_probe as _};
@@ -75,19 +76,19 @@ const RTC_BACKUP_RTCW_INDEX: usize = 1; // Index to RTC backup register where RT
 const RTC_BACKUP_KEY_VALUE: u32 = 0xA53C4B69; // Value stored at RTC_BACKUP_KEY_INDEX if RTCW value is good
 const EMBASSY_DATETIME_OFFSET: u16 = 2000; // Offset for the year in DateTime, since embassy-stm32 uses 2000-2099, but the RTC uses 0-99.
 
-struct Timestamp {
+struct Rtclock {
     rtc: Rtc, // <'static, embassy_stm32::rtc::RtcConfig>
     rtcw: u32,
 }
 
-impl Timestamp {
-    /// Create a new Timestamp instance if the RTC is already running.
+impl Rtclock {
+    /// Create a new Rtclock instance if the RTC is already running.
     pub fn from_running(mut rtc: Rtc) -> Self {
         let rtcw = rtc.read_backup_register(RTC_BACKUP_RTCW_INDEX)
             .unwrap_or(0); // Read the RTCW value from the backup register, or 0 if not set.
         Self { rtc, rtcw }
     }
-    /// Create a new Timestamp instance with a specific RTCW value.
+    /// Create a new Rtclock instance with a specific RTCW value.
     /// This is typically used when the RTC is starting from a power outage.
     pub fn from_rtcw(mut rtc: Rtc, rtcw: u32) -> Self {
         // Store the RTCW value in the backup register.
@@ -95,9 +96,9 @@ impl Timestamp {
         // Write the key to the backup register to indicate that the RTCW value is valid.
         rtc.write_backup_register(RTC_BACKUP_KEY_INDEX, RTC_BACKUP_KEY_VALUE);
         // Convert to datetime and set RTC.
-        let dt = Timestamp::seconds_to_datetime(rtcw);
+        let dt = Rtclock::seconds_to_datetime(rtcw);
         rtc.set_datetime(dt).expect("Failed to set datetime");
-        // Return the Timestamp instance.
+        // Return the Rtclock instance.
         Self { rtc, rtcw }
     }
 
@@ -106,7 +107,7 @@ impl Timestamp {
         // Get the current time in seconds since the epoch.
         let now = self.rtc.now().unwrap();
         // Convert to seconds since the epoch (0, 3, 1).
-        Timestamp::datetime_to_seconds(now).expect("Failed to convert datetime to seconds")
+        Rtclock::datetime_to_seconds(now).expect("Failed to convert datetime to seconds")
     }
 
     /// Get RTCWake, the value of RELT at the last "brownout" event.
@@ -114,28 +115,12 @@ impl Timestamp {
         self.rtcw
     }
 
-    // Static methods for Timestamp
+    // Static methods for Rtclock
 
     /// Check if the RTC is running.
     pub fn is_running(rtc: &Rtc) -> bool {
         // Check if the RTC is running by reading the backup register.
         rtc.read_backup_register(RTC_BACKUP_KEY_INDEX).unwrap_or(0) == RTC_BACKUP_KEY_VALUE
-    }
-
-    /// Convert seconds to days, hours, minutes, and remaining seconds.
-    pub fn seconds_to_dhms(seconds: u32) -> (u32, u32, u32, u32) {
-        // Size constraints:
-        // days can be up to 49_710, or could fit in a u16, should we want.
-        // seconds_of_day still needs a u32.
-        // hours, minutes, remaining_seconds could all fit in u8.
-        let days = seconds / 86400; // Because there are 86400 seconds in a day.
-        let seconds_of_day = seconds - days * 86400; // = seconds % 86400
-        let hours = seconds_of_day / 3600;
-        let remaining_seconds = seconds_of_day - hours * 3600;
-        let minutes = remaining_seconds / 60;
-        let remaining_seconds = remaining_seconds - minutes * 60;
-
-        (days, hours, minutes, remaining_seconds)
     }
 
     /// Convert seconds since the epoch (0, 3, 1) to a DateTime.
@@ -209,38 +194,6 @@ impl Timestamp {
         Some(days_since_epoch * 86400 + hour * 3600 + minute * 60 + second)
     }
 
-    /// Convert seconds to an ISO 8601 Duration string.
-    pub fn seconds_to_iso8601_duration(seconds: u32) -> ArrayString<32> {
-        // Convert seconds to days, hours, minutes, and remaining seconds.
-        let (days, hours, minutes, remaining_seconds) = Timestamp::seconds_to_dhms(seconds);
-        // Format the string according to ISO 8601 duration format.
-        let mut result = ArrayString::<32>::new();
-        if days > 0 {
-            write!(&mut result, "P{}D", days).expect("can't write");
-        } else {
-            result.push_str("P0D");
-        }
-        if hours > 0 || minutes > 0 || remaining_seconds > 0 {
-            write!(&mut result, "T{}H{}M{}S", hours, minutes, remaining_seconds).expect("can't write");
-        } else {
-            result.push_str("T0S");
-        }
-        result
-    }
-
-    pub fn parse_duration(input: &str) -> Option<(u32, u32, u32, u32)> {
-        let input = input.strip_prefix('P')?;
-        let (days_str, rest) = input.split_once("DT")?;
-        let (hours_str, rest) = rest.split_once('H')?;
-        let (minutes_str, rest) = rest.split_once('M')?;
-        let seconds_str = rest.strip_suffix('S')?;
-        Some((
-            days_str.parse().ok()?,
-            hours_str.parse().ok()?,
-            minutes_str.parse().ok()?,
-            seconds_str.parse().ok()?)
-        )
-    }
 }
 
 
@@ -294,10 +247,10 @@ async fn main(spawner: Spawner) {
     let mut btn = ExtiInput::new(p.PB5, p.EXTI5, Pull::Up);
 
     // Temporary test code to check the conversion from seconds to DateTime.
-    let dt = Timestamp::seconds_to_datetime(0);
+    let dt = Rtclock::seconds_to_datetime(0);
     info!("should be march 1 2000: {}-{:02}-{:02} {:02}:{:02}:{:02}", 
         dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute(), dt.second());
-    let dt = Timestamp::seconds_to_datetime(86400);
+    let dt = Rtclock::seconds_to_datetime(86400);
     info!("should be march 2 2000: {}-{:02}-{:02} {:02}:{:02}:{:02}", 
         dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute(), dt.second());
 
@@ -311,26 +264,26 @@ async fn main(spawner: Spawner) {
     let iso_duration = Timestamp::seconds_to_iso8601_duration(total_seconds);
     info!("ISO 8601 Duration: {}", iso_duration.as_str());
 
-    let reconverted_seconds = Timestamp::datetime_to_seconds(dt).expect("Failed to convert DateTime to seconds");
+    let reconverted_seconds = Rtclock::datetime_to_seconds(dt).expect("Failed to convert DateTime to seconds");
     info!("Reconverted seconds: {}", reconverted_seconds);
 
     let dt2: DateTime = DateTime::from(2000, 8, 15, embassy_stm32::rtc::DayOfWeek::Monday, 0, 0, 0)
         .expect("Failed to create DateTime");
-    let seconds = Timestamp::datetime_to_seconds(dt2).expect("Failed to convert DateTime to seconds");
+    let seconds = Rtclock::datetime_to_seconds(dt2).expect("Failed to convert DateTime to seconds");
     // Should be 14,428,800.
     info!("DateTime 2000-08-15 00:00:00 converted to seconds: {}", seconds);
     
         // RTC initialization
     let mut rtc = Rtc::new(p.RTC, RtcConfig::default());
     rtc.set_daylight_savings(false);
-    let timestamp = if Timestamp::is_running(&rtc) {
+    let timestamp = if Rtclock::is_running(&rtc) {
         info!("RTC is running, using existing RTCW value...");
-        Timestamp::from_running(rtc)
+        Rtclock::from_running(rtc)
     } else {
         // RTC was not running, so we need to initialize it.
         info!("RTC not running, initializing...");
         let rtcw = 0_u32; // TODO: Get the RTCW value from non-volatile storage or set to 0.
-        Timestamp::from_rtcw(rtc, rtcw)
+        Rtclock::from_rtcw(rtc, rtcw)
     };
 
 
