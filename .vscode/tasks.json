@@ -20,6 +20,7 @@
 			},
 			"problemMatcher": ["$rustc"],
 			"options": {
+				"cwd": "${workspaceFolder}/hardware_main",
 				"env": {
 					"DEFMT_LOG": "trace"
 				}

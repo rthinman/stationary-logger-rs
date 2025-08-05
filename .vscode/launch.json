@@ -20,7 +20,7 @@
                 {
                     "coreIndex": 0,
                     "rttEnabled": true,
-                    "programBinary": "target\\thumbv7em-none-eabi\\debug\\${workspaceFolderBasename}"
+                    "programBinary": "target\\thumbv7em-none-eabi\\debug\\hardware_main"
                 }
             ]
         }
