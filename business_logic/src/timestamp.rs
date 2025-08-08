@@ -1,6 +1,10 @@
 use arrayvec::ArrayString;
 use core::fmt::Write;
 
+const SHORT_SAMPLE_PERIOD: u32 = 900;     // 15 minutes in seconds.
+const LONG_SAMPLE_PERIOD: u32 = 8 * 3600; // 8 hours in seconds.
+
+
 // TODO: implement Format for Timestamp
 
 /// Represents a timestamp in seconds since the epoch.
@@ -56,6 +60,20 @@ impl Timestamp {
         ))
     }
 
+    /// Get the last short sample period end timestamp.
+    pub fn get_last_short_sample_end(&self) -> Timestamp {
+        Timestamp {
+            seconds: (self.seconds / SHORT_SAMPLE_PERIOD) * SHORT_SAMPLE_PERIOD,
+        }
+    }
+
+    /// Get the last long sample period end timestamp.
+    pub fn get_last_long_sample_end(&self) -> Timestamp {
+        Timestamp {
+            seconds: (self.seconds / LONG_SAMPLE_PERIOD) * LONG_SAMPLE_PERIOD,
+        }
+    }
+
 }
 
 #[cfg(test)]
@@ -85,4 +103,53 @@ mod tests {
         let parsed = Timestamp::parse_duration("P2DT3H4M5");
         assert_eq!(parsed, None); // Invalid format, missing seconds.
     }
+
+    #[test]
+    fn test_get_last_short_sample_end() {
+        // 93784 seconds: 93784 / 900 = 104 remainder 184, so prev period end is (93784/900)*900 = 93600
+        let ts = Timestamp { seconds: 93784 };
+        let end = ts.get_last_short_sample_end();
+        assert_eq!(end.seconds, 93600);
+
+        // Exactly on a period boundary
+        let ts = Timestamp { seconds: 900 };
+        let end = ts.get_last_short_sample_end();
+        assert_eq!(end.seconds, 900);
+
+        // At zero
+        let ts = Timestamp { seconds: 0 };
+        let end = ts.get_last_short_sample_end();
+        assert_eq!(end.seconds, 0);
+    }
+
+    #[test]
+    fn test_get_last_long_sample_end() {
+        // 93784 seconds: 8*3600 = 28800, 93784 / 28800 = 3, so 3*28800 = 86400
+        let ts = Timestamp { seconds: 93784 };
+        let end = ts.get_last_long_sample_end();
+        assert_eq!(end.seconds, 86400);
+
+        // Exactly on a period boundary
+        let ts = Timestamp { seconds: 28800 };
+        let end = ts.get_last_long_sample_end();
+        assert_eq!(end.seconds, 28800);
+
+        // At zero
+        let ts = Timestamp { seconds: 0 };
+        let end = ts.get_last_long_sample_end();
+        assert_eq!(end.seconds, 0);
+    }
+
+    #[test]
+    fn test_long_sample_end_never_after_short_sample_end() {
+        // Test a range of timestamps, including boundaries and random values
+        for &seconds in &[0, 1, 899, 900, 901, 28799, 28800, 28801, 93784, 100000, 123456] {
+            let ts = Timestamp { seconds };
+            let short_end = ts.get_last_short_sample_end().seconds;
+            let long_end = ts.get_last_long_sample_end().seconds;
+            assert!(long_end <= short_end, "long_end={} > short_end={} for seconds={}", long_end, short_end, seconds);
+        }
+    }
+
+
 }
