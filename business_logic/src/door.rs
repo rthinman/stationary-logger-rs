@@ -1,4 +1,4 @@
-use crate::timestamp::Timestamp;
+use crate::timestamp::{Timestamp, TimestampError};
 
 const DOOR_ALARM_THRESHOLD: u32 = 300;    // 5 minutes in seconds.
 
@@ -7,7 +7,6 @@ const DOOR_ALARM_THRESHOLD: u32 = 300;    // 5 minutes in seconds.
 //       If it is before prev_x_sample_ended + X_SAMPLE_PERIOD, do we advance to that one?
 //       At it exactly is the ideal case.
 //       If it is after prev_x_sample_ended + X_SAMPLE_PERIOD, do we just output for the one sample period?
-// TOOD: consider keeping track of the last event's timestamp and forbidding out of order events.
 
 pub enum DoorEvent {
     Opened(Timestamp), // Timestamp when the door was opened.
@@ -16,6 +15,7 @@ pub enum DoorEvent {
 
 pub struct Door {
     opened: Option<Timestamp>, // Timestamp when the door was opened, None if closed.
+    last_event_ts: Timestamp, // Timestamp of the last event or reset.
     prev_short_sample_ended: Timestamp, // Timestamp the previous short sampling period ended. (ideally, 0, 900, 1800...)
     prev_long_sample_ended: Timestamp, // Timestamp the previous long sampling period ended.
     short_open_count: u16, // Count of openings for short sampling.
@@ -30,6 +30,7 @@ impl Default for Door {
     fn default() -> Self {
         Self {
             opened: None,
+            last_event_ts: Timestamp { seconds: 0 },
             prev_short_sample_ended: Timestamp { seconds: 0 },
             prev_long_sample_ended: Timestamp { seconds: 0 },
             short_open_count: 0,
@@ -58,6 +59,7 @@ impl Door {
 
         Self {
             opened: opened,
+            last_event_ts: now,
             prev_short_sample_ended: sample_ts,
             prev_long_sample_ended: prev_long_sample_ended,
             short_open_count: open_count,
@@ -69,9 +71,15 @@ impl Door {
         }
     }
 
-    pub fn log_event(&mut self, event: DoorEvent) {
+    pub fn log_event(&mut self, event: DoorEvent) -> Result<(), TimestampError> {
+        // Validate the event timestamp.
+        let timestamp = match event {
+            DoorEvent::Opened(ts) => ts,
+            DoorEvent::Closed(ts) => ts,
+        };
+        self.validate_timestamp_and_update(&timestamp)?;
+        
         // TODO: Handle the case where the door is opened while it is already open, and vice versa.
-        // TODO: Handle out of order events.
         match event {
             DoorEvent::Opened(timestamp) => {
                 self.opened = Some(timestamp);
@@ -91,6 +99,7 @@ impl Door {
                 }
             }
         }
+        Ok(())
     }
 
     pub fn get_short_sample(&self, check_time: Timestamp) -> (u16, u32) {
@@ -123,18 +132,22 @@ impl Door {
         (self.long_open_count, self.long_open_accum + presently_open_seconds)
     }       
 
-    pub fn reset_short_sample(&mut self, timestamp: Timestamp) {
+    pub fn reset_short_sample(&mut self, timestamp: Timestamp) -> Result<(), TimestampError> {
+        self.validate_timestamp_and_update(&timestamp)?;
         self.prev_short_sample_ended = timestamp;
         self.short_open_count = 0;
         self.short_open_accum = 0;
         self.short_alarmed = false;
+        Ok(())
     }
 
-    pub fn reset_long_sample(&mut self, timestamp: Timestamp) {
+    pub fn reset_long_sample(&mut self, timestamp: Timestamp) -> Result<(), TimestampError> {
+        self.validate_timestamp_and_update(&timestamp)?;
         self.prev_long_sample_ended = timestamp;
         self.long_open_count = 0;
         self.long_open_accum = 0;
         self.long_alarmed = false;
+        Ok(())
     }
 
     pub fn is_short_sample_alarmed(&self, now: Timestamp) -> bool {
@@ -174,6 +187,14 @@ impl Door {
         }
     }
 
+    fn validate_timestamp_and_update(&mut self, timestamp: &Timestamp) -> Result<(), TimestampError> {
+        if timestamp.seconds < self.last_event_ts.seconds {
+            return Err(TimestampError::OutOfOrder);
+        }
+        self.last_event_ts = *timestamp;
+        Ok(())
+    }
+    
 }
 
 #[cfg(test)]
@@ -186,25 +207,30 @@ mod tests {
         let open_time = Timestamp { seconds: 1000 };
         let close_time = Timestamp { seconds: 1200 };
 
-        door.log_event(DoorEvent::Opened(open_time));
+        door.log_event(DoorEvent::Opened(open_time)).unwrap();
         assert_eq!(door.opened, Some(open_time));
         assert_eq!(door.short_open_count, 1);
         assert_eq!(door.long_open_count, 1);
 
-        door.log_event(DoorEvent::Closed(close_time));
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
         assert_eq!(door.short_open_accum, 200);
         assert_eq!(door.long_open_accum, 200);
+
+        // Out-of-order event: try to open at a time before the last event
+        let out_of_order_time = Timestamp { seconds: 100 };
+        let result = door.log_event(DoorEvent::Opened(out_of_order_time));
+        assert!(matches!(result, Err(TimestampError::OutOfOrder)));
 
         // Open and close again.
         let open_time = Timestamp { seconds: 1500 };
         let close_time = Timestamp { seconds: 1800 };
 
-        door.log_event(DoorEvent::Opened(open_time));
+        door.log_event(DoorEvent::Opened(open_time)).unwrap();
         assert_eq!(door.opened, Some(open_time));
         assert_eq!(door.short_open_count, 2);
         assert_eq!(door.long_open_count, 2);
 
-        door.log_event(DoorEvent::Closed(close_time));
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
         assert_eq!(door.short_open_accum, 500);
         assert_eq!(door.long_open_accum, 500);
 
@@ -216,12 +242,12 @@ mod tests {
         let open_time = Timestamp { seconds: 1000 };
         let close_time = Timestamp { seconds: 1200 };
 
-        door.log_event(DoorEvent::Opened(open_time));
+        door.log_event(DoorEvent::Opened(open_time)).unwrap();
         assert!(!door.is_short_sample_alarmed(close_time));
         assert!(!door.is_long_sample_alarmed(close_time));
 
         // Shorter than the alarm duration, should not alarm.
-        door.log_event(DoorEvent::Closed(close_time));
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
         assert!(!door.is_short_sample_alarmed(close_time));
         assert!(!door.is_long_sample_alarmed(close_time));
 
@@ -233,7 +259,7 @@ mod tests {
 
 
         // Exactly at the threshold, should not alarm.
-        door.log_event(DoorEvent::Opened(open_time));
+        door.log_event(DoorEvent::Opened(open_time)).unwrap();
         assert!(!door.is_short_sample_alarmed(check_time));
         assert!(!door.is_long_sample_alarmed(check_time));
 
@@ -243,7 +269,7 @@ mod tests {
         assert!(door.is_long_sample_alarmed(close_time));
 
         // Close the door after exceeding the threshold; should still alarm.
-        door.log_event(DoorEvent::Closed(close_time));
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
         assert!(door.is_short_sample_alarmed(check_time2));
         assert!(door.is_long_sample_alarmed(check_time2));
     }
@@ -256,8 +282,8 @@ mod tests {
         let check_time = Timestamp { seconds: 900 };
 
         // Open and close the door
-        door.log_event(DoorEvent::Opened(open_time));
-        door.log_event(DoorEvent::Closed(close_time));
+        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
 
         // Get short sample values at 900 seconds
         let (short_count, short_accum) = door.get_short_sample(check_time);
@@ -301,7 +327,7 @@ mod tests {
         assert_eq!(door.prev_long_sample_ended.seconds, 0);
 
         // Open and close the door
-        door.log_event(DoorEvent::Opened(open_time));
+        door.log_event(DoorEvent::Opened(open_time)).unwrap();
         let (short_count, short_accum) = door.get_short_sample(check_while_open);
         assert_eq!(short_count, 1);
         assert_eq!(short_accum, 100); // 1400 - 1300 = 100 seconds while open
@@ -313,7 +339,7 @@ mod tests {
         assert_eq!(long_accum, 100);
         assert!(!door.is_long_sample_alarmed(check_while_open));
 
-        door.log_event(DoorEvent::Closed(close_time));
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
 
         // Get short sample values at 1800 seconds
         let (short_count, short_accum) = door.get_short_sample(check_time);
@@ -328,7 +354,7 @@ mod tests {
         assert!(door.is_long_sample_alarmed(check_time));
 
         // Reset short sample at 1800 seconds, which should not affect long sample.
-        door.reset_short_sample(check_time);
+        door.reset_short_sample(check_time).unwrap();
         assert_eq!(door.short_open_count, 0);
         assert_eq!(door.short_open_accum, 0);
         assert_eq!(door.prev_short_sample_ended, check_time);
@@ -336,7 +362,7 @@ mod tests {
         assert_eq!(long_accum, 400);
 
         // Reset long sample at 1800 seconds
-        door.reset_long_sample(check_time);
+        door.reset_long_sample(check_time).unwrap();
         assert_eq!(door.long_open_count, 0);
         assert_eq!(door.long_open_accum, 0);
         assert_eq!(door.prev_long_sample_ended, check_time);
@@ -368,7 +394,7 @@ mod tests {
         assert!(door.is_long_sample_alarmed(check_time));
 
         // Close the door, then check at 1800 seconds when the door has been open for 799 sec.
-        door.log_event(DoorEvent::Closed(close_time));
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
         let (short_count, short_accum) = door.get_short_sample(check_time);
         assert_eq!(short_count, 1);
         assert_eq!(short_accum, 799);
@@ -382,6 +408,32 @@ mod tests {
     }
 
     #[test]
+    fn test_out_of_order_reset() {
+        let mut door = Door::default();
+        let open_time = Timestamp { seconds: 700 };
+        let close_time = Timestamp { seconds: 800 };
+        let reset_time = Timestamp { seconds: 900 };
+
+        // Open the door
+        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+
+
+        // Try to reset with an out-of-order timestamp
+        let out_of_order_reset = Timestamp { seconds: 600 };
+        assert!(matches!(door.reset_short_sample(out_of_order_reset), Err(TimestampError::OutOfOrder)));
+
+        // Close the door
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+
+        // Reset short sample with a valid timestamp
+        assert!(door.reset_short_sample(reset_time).is_ok());
+        assert_eq!(door.prev_short_sample_ended, reset_time);
+        
+        // Try to reset with an out-of-order timestamp
+        assert!(matches!(door.reset_short_sample(out_of_order_reset), Err(TimestampError::OutOfOrder)));
+    }
+
+    #[test]
     fn test_get_idrv() {
         let mut door = Door::default();
         let open_time = Timestamp { seconds: 100 };
@@ -392,19 +444,19 @@ mod tests {
         let check_time3 = Timestamp { seconds: 1400 };
 
         // Open the door
-        door.log_event(DoorEvent::Opened(open_time));
+        door.log_event(DoorEvent::Opened(open_time)).unwrap();
 
         // Get IDRV at 1200 seconds, should return 200 (1200 - 1000)
         assert_eq!(door.get_idrv(check_time1), 200);
 
         // Reset the short sample
-        door.reset_short_sample(reset_time);
+        door.reset_short_sample(reset_time).unwrap();
 
         // Get IDRV after reset, should return 1100.
         assert_eq!(door.get_idrv(check_time2), 1100);
 
         // Close the door
-        door.log_event(DoorEvent::Closed(close_time));
+        door.log_event(DoorEvent::Closed(close_time)).unwrap();
 
         // Get IDRV after closing, should return 0
         assert_eq!(door.get_idrv(check_time3), 0);

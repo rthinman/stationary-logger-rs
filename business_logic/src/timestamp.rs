@@ -7,6 +7,14 @@ const LONG_SAMPLE_PERIOD: u32 = 8 * 3600; // 8 hours in seconds.
 
 // TODO: implement Format for Timestamp
 
+/// Errors that can occur when working with timestamps.
+#[derive(Debug)]
+pub enum TimestampError {
+    InvalidFormat,
+    OutOfRange,
+    OutOfOrder,
+}
+
 /// Represents a timestamp in seconds since the epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timestamp {
