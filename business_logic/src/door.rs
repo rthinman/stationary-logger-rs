@@ -1,3 +1,6 @@
+//! This module contains the business logic for handling door events, including
+//! tracking door open/close events, accumulating open durations, and managing alarms.
+
 use crate::timestamp::{Timestamp, TimestampError};
 
 const DOOR_ALARM_THRESHOLD: u32 = 300;    // 5 minutes in seconds.
@@ -94,8 +97,8 @@ impl Door {
                     self.short_open_accum += duration;
                     self.long_open_accum += duration;
                     // Check if the short sample alarm should be triggered.
-                    self.short_alarmed = self.short_open_accum >= DOOR_ALARM_THRESHOLD;
-                    self.long_alarmed = self.long_open_accum >= DOOR_ALARM_THRESHOLD;
+                    self.short_alarmed = duration >= DOOR_ALARM_THRESHOLD;
+                    self.long_alarmed = duration >= DOOR_ALARM_THRESHOLD;
                 }
             }
         }
@@ -461,5 +464,32 @@ mod tests {
         // Get IDRV after closing, should return 0
         assert_eq!(door.get_idrv(check_time3), 0);
     }
+
+    #[test]
+    fn test_multiple_brief_openings() {
+        let mut door = Door::default();
+        let open_time1 = Timestamp { seconds: 1000 };
+        let close_time1 = Timestamp { seconds: 1150 };
+        let open_time2 = Timestamp { seconds: 1200 };
+        let check_time2 = Timestamp { seconds: 1300 };
+        let close_time2 = Timestamp { seconds: 1450 };
+        // let reset_time = Timestamp { seconds: 1500 };
+
+        // Open the door for the first time
+        door.log_event(DoorEvent::Opened(open_time1)).unwrap();
+        door.log_event(DoorEvent::Closed(close_time1)).unwrap();
+        assert!(!door.is_short_sample_alarmed(close_time1));
+        assert!(!door.is_long_sample_alarmed(close_time1)); // 100 sec, no problem.
+
+        // Open the door for the second time
+        door.log_event(DoorEvent::Opened(open_time2)).unwrap();
+        assert!(!door.is_short_sample_alarmed(check_time2));
+        assert!(!door.is_long_sample_alarmed(check_time2)); // Also 100 sec.
+        door.log_event(DoorEvent::Closed(close_time2)).unwrap(); // Close after 250 seconds, should not alarm
+        assert!(!door.is_short_sample_alarmed(close_time2));
+        assert!(!door.is_long_sample_alarmed(close_time2));
+
+
+    }        
 }
 
