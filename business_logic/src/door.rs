@@ -11,11 +11,13 @@ const DOOR_ALARM_THRESHOLD: u32 = 300;    // 5 minutes in seconds.
 //       At it exactly is the ideal case.
 //       If it is after prev_x_sample_ended + X_SAMPLE_PERIOD, do we just output for the one sample period?
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DoorEvent {
     Opened(Timestamp), // Timestamp when the door was opened.
     Closed(Timestamp), // Timestamp when the door was closed.
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Door {
     opened: Option<Timestamp>, // Timestamp when the door was opened, None if closed.
     last_event_ts: Timestamp, // Timestamp of the last event or reset.
