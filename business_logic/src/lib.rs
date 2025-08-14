@@ -17,6 +17,7 @@ pub fn process_data(input: &str) -> Status {
 
 pub mod door;
 pub mod power_availability;
+pub mod temperature_aggregator;
 pub mod timestamp;
 
 #[cfg(test)]
