@@ -1,8 +1,8 @@
 //! This module contains the implementation of a dual temperature sensor
 //! that reads ambient and vaccine temperatures from I2C sensors.
 
-use embassy_stm32::{gpio::{Level, Output, Pull, Speed}, i2c::{ErrorInterruptHandler, EventInterruptHandler, I2c}, rtc::{Rtc, RtcConfig}, time::Hertz, Config};
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_stm32::gpio::Output;
+use embassy_time::{Duration, Timer};
 
 use business_logic::logger::TemperatureSample;
 use crate::fmt::warn;

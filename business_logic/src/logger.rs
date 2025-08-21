@@ -19,6 +19,16 @@ pub enum LoggerEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AlarmTrigger {
+    LowTemperatureStart,
+    LowTemperatureCancel,
+    HighTemperatureStart,
+    HighTemperatureCancel,
+    DoorOpenStart,
+    DoorOpenCancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Logger {
     pub agg: aggregator::Aggregator,
 }

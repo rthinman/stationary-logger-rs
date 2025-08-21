@@ -24,14 +24,15 @@ use embassy_time::{Duration, Ticker, Timer};
 use panic_halt as _;
 
 // Internal modules, both this crate and the business logic crate.
-use business_logic::{door::DoorEvent, logger::{Logger, LoggerEvent, TemperatureSample}};
+use business_logic::{door::DoorEvent, logger::{AlarmTrigger, Logger, LoggerEvent, TemperatureSample}};
 use business_logic::timestamp::Timestamp;
 use fmt::{info, warn, unwrap};
 use rtclock::{Rtclock};
 use temp_sensor::{AMBIENT_ADDRESS, DualTempSensor, VACCINE_ADDRESS};
 
-// Communicate events between tasks using a channel.
-static CHANNEL: Channel<ThreadModeRawMutex, LoggerEvent, 8> = Channel::new();
+// Communicate between tasks using channels.
+static EVENT_CHANNEL: Channel<ThreadModeRawMutex, LoggerEvent, 8> = Channel::new();
+static ALARM_CHANNEL: Channel<ThreadModeRawMutex, AlarmTrigger, 8> = Channel::new();
 
 // enum ButtonEvent {
 //     Pressed,
@@ -127,14 +128,14 @@ async fn main(spawner: Spawner) {
     let mut temp_sensor = DualTempSensor::new(i2c, AMBIENT_ADDRESS, VACCINE_ADDRESS, pwrv_nen);
 
     // Spawn the button task
-    spawner.spawn(button(btn, CHANNEL.sender())).unwrap();
+    spawner.spawn(button(btn, EVENT_CHANNEL.sender())).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
-    spawner.spawn(get_temperature(temp_sensor, CHANNEL.sender())).unwrap();
+    spawner.spawn(get_temperature(temp_sensor, EVENT_CHANNEL.sender())).unwrap();
 
     warn!("Starting main loop");
 
     loop {
-        let event = CHANNEL.receive().await;
+        let event = EVENT_CHANNEL.receive().await;
         let now = rt_clock.get_timestamp();
 
         match event {
