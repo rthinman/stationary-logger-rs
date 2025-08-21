@@ -15,7 +15,9 @@ pub fn process_data(input: &str) -> Status {
     }
 }
 
+pub mod aggregator;
 pub mod door;
+pub mod logger;
 pub mod power_availability;
 pub mod temperature_aggregator;
 pub mod timestamp;

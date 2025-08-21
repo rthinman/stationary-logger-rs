@@ -16,7 +16,7 @@ pub enum TimestampError {
 }
 
 /// Represents a timestamp in seconds since the epoch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Timestamp {
     pub seconds: u32,
 }
@@ -82,6 +82,11 @@ impl Timestamp {
         }
     }
 
+    pub fn get_next_aggregation_start(&self) -> Timestamp {
+        Timestamp {
+            seconds: (self.seconds / LONG_SAMPLE_PERIOD + 1) * LONG_SAMPLE_PERIOD,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -135,17 +140,24 @@ mod tests {
         // 93784 seconds: 8*3600 = 28800, 93784 / 28800 = 3, so 3*28800 = 86400
         let ts = Timestamp { seconds: 93784 };
         let end = ts.get_last_long_sample_end();
+        let start = ts.get_next_aggregation_start();
         assert_eq!(end.seconds, 86400);
+        assert_eq!(start.seconds, 115200); // 86400 + 28800
 
         // Exactly on a period boundary
         let ts = Timestamp { seconds: 28800 };
         let end = ts.get_last_long_sample_end();
+        let start = ts.get_next_aggregation_start();
         assert_eq!(end.seconds, 28800);
+        assert_eq!(start.seconds, 57600); // 28800 + 28800
+
 
         // At zero
         let ts = Timestamp { seconds: 0 };
         let end = ts.get_last_long_sample_end();
+        let start = ts.get_next_aggregation_start();
         assert_eq!(end.seconds, 0);
+        assert_eq!(start.seconds, 28800); // 0 + 28800
     }
 
     #[test]
@@ -155,7 +167,9 @@ mod tests {
             let ts = Timestamp { seconds };
             let short_end = ts.get_last_short_sample_end().seconds;
             let long_end = ts.get_last_long_sample_end().seconds;
+            let start = ts.get_next_aggregation_start().seconds;
             assert!(long_end <= short_end, "long_end={} > short_end={} for seconds={}", long_end, short_end, seconds);
+            assert!(long_end <= start, "long_end={} > start{} for seconds={}", long_end, start, seconds);
         }
     }
 

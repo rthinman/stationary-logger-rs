@@ -13,8 +13,10 @@ const DOOR_ALARM_THRESHOLD: u32 = 300;    // 5 minutes in seconds.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DoorEvent {
-    Opened(Timestamp), // Timestamp when the door was opened.
-    Closed(Timestamp), // Timestamp when the door was closed.
+    Opened,
+    Closed,
+    // Opened(Timestamp), // Timestamp when the door was opened.
+    // Closed(Timestamp), // Timestamp when the door was closed.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -76,23 +78,23 @@ impl Door {
         }
     }
 
-    pub fn log_event(&mut self, event: DoorEvent) -> Result<(), TimestampError> {
+    pub fn log_event(&mut self, event: DoorEvent, timestamp: Timestamp) -> Result<(), TimestampError> {
         // Validate the event timestamp.
-        let timestamp = match event {
-            DoorEvent::Opened(ts) => ts,
-            DoorEvent::Closed(ts) => ts,
-        };
+        // let timestamp = match event {
+        //     DoorEvent::Opened(ts) => ts,
+        //     DoorEvent::Closed(ts) => ts,
+        // };
         self.validate_timestamp_and_update(&timestamp)?;
         
         // TODO: Handle the case where the door is opened while it is already open, and vice versa.
         match event {
-            DoorEvent::Opened(timestamp) => {
+            DoorEvent::Opened => {
                 self.opened = Some(timestamp);
                 // Counts incremented when the door is opened.
                 self.short_open_count += 1;
                 self.long_open_count += 1;
             }
-            DoorEvent::Closed(timestamp) => {
+            DoorEvent::Closed => {
                 if let Some(opened) = self.opened.take() {
                     let duration = timestamp.seconds - opened.seconds;
                     // Open durations are accumulated when the door is closed.
@@ -212,12 +214,12 @@ mod tests {
         let open_time = Timestamp { seconds: 1000 };
         let close_time = Timestamp { seconds: 1200 };
 
-        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+        door.log_event(DoorEvent::Opened, open_time).unwrap();
         assert_eq!(door.opened, Some(open_time));
         assert_eq!(door.short_open_count, 1);
         assert_eq!(door.long_open_count, 1);
 
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         assert_eq!(door.short_open_accum, 200);
         assert_eq!(door.long_open_accum, 200);
 
@@ -230,12 +232,12 @@ mod tests {
         let open_time = Timestamp { seconds: 1500 };
         let close_time = Timestamp { seconds: 1800 };
 
-        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         assert_eq!(door.opened, Some(open_time));
         assert_eq!(door.short_open_count, 2);
         assert_eq!(door.long_open_count, 2);
 
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         assert_eq!(door.short_open_accum, 500);
         assert_eq!(door.long_open_accum, 500);
 
@@ -247,12 +249,12 @@ mod tests {
         let open_time = Timestamp { seconds: 1000 };
         let close_time = Timestamp { seconds: 1200 };
 
-        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         assert!(!door.is_short_sample_alarmed(close_time));
         assert!(!door.is_long_sample_alarmed(close_time));
 
         // Shorter than the alarm duration, should not alarm.
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         assert!(!door.is_short_sample_alarmed(close_time));
         assert!(!door.is_long_sample_alarmed(close_time));
 
@@ -264,7 +266,7 @@ mod tests {
 
 
         // Exactly at the threshold, should not alarm.
-        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         assert!(!door.is_short_sample_alarmed(check_time));
         assert!(!door.is_long_sample_alarmed(check_time));
 
@@ -274,7 +276,7 @@ mod tests {
         assert!(door.is_long_sample_alarmed(close_time));
 
         // Close the door after exceeding the threshold; should still alarm.
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         assert!(door.is_short_sample_alarmed(check_time2));
         assert!(door.is_long_sample_alarmed(check_time2));
     }
@@ -287,8 +289,8 @@ mod tests {
         let check_time = Timestamp { seconds: 900 };
 
         // Open and close the door
-        door.log_event(DoorEvent::Opened(open_time)).unwrap();
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
 
         // Get short sample values at 900 seconds
         let (short_count, short_accum) = door.get_short_sample(check_time);
@@ -332,7 +334,7 @@ mod tests {
         assert_eq!(door.prev_long_sample_ended.seconds, 0);
 
         // Open and close the door
-        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         let (short_count, short_accum) = door.get_short_sample(check_while_open);
         assert_eq!(short_count, 1);
         assert_eq!(short_accum, 100); // 1400 - 1300 = 100 seconds while open
@@ -344,7 +346,7 @@ mod tests {
         assert_eq!(long_accum, 100);
         assert!(!door.is_long_sample_alarmed(check_while_open));
 
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
 
         // Get short sample values at 1800 seconds
         let (short_count, short_accum) = door.get_short_sample(check_time);
@@ -399,7 +401,7 @@ mod tests {
         assert!(door.is_long_sample_alarmed(check_time));
 
         // Close the door, then check at 1800 seconds when the door has been open for 799 sec.
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
         let (short_count, short_accum) = door.get_short_sample(check_time);
         assert_eq!(short_count, 1);
         assert_eq!(short_accum, 799);
@@ -420,7 +422,7 @@ mod tests {
         let reset_time = Timestamp { seconds: 900 };
 
         // Open the door
-        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
 
 
         // Try to reset with an out-of-order timestamp
@@ -428,7 +430,7 @@ mod tests {
         assert!(matches!(door.reset_short_sample(out_of_order_reset), Err(TimestampError::OutOfOrder)));
 
         // Close the door
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
 
         // Reset short sample with a valid timestamp
         assert!(door.reset_short_sample(reset_time).is_ok());
@@ -449,7 +451,7 @@ mod tests {
         let check_time3 = Timestamp { seconds: 1400 };
 
         // Open the door
-        door.log_event(DoorEvent::Opened(open_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
 
         // Get IDRV at 1200 seconds, should return 200 (1200 - 1000)
         assert_eq!(door.get_idrv(check_time1), 200);
@@ -461,7 +463,7 @@ mod tests {
         assert_eq!(door.get_idrv(check_time2), 1100);
 
         // Close the door
-        door.log_event(DoorEvent::Closed(close_time)).unwrap();
+        door.log_event(DoorEvent::Closed, close_time).unwrap();
 
         // Get IDRV after closing, should return 0
         assert_eq!(door.get_idrv(check_time3), 0);

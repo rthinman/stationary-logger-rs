@@ -11,6 +11,7 @@ use arrayvec::ArrayString;
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
 use crate::fmt::unwrap;
+use business_logic::{door::DoorEvent, logger::{Logger, LoggerEvent, TemperatureSample}};
 use business_logic::timestamp::Timestamp;
 
 #[cfg(feature = "defmt")]
@@ -31,17 +32,17 @@ const SENSOR_REGISTER: u8 = 0x00; // Register to read temperature data.
 const SENSOR_CONVERSION_TIME: Duration = Duration::from_millis(51); // Time to wait for sensor conversion.
 
 // Communicate events between tasks using a channel.
-static CHANNEL: Channel<ThreadModeRawMutex, Events, 8> = Channel::new();
+static CHANNEL: Channel<ThreadModeRawMutex, LoggerEvent, 8> = Channel::new();
 
-enum ButtonEvent {
-    Pressed,
-    Released,
-}
+// enum ButtonEvent {
+//     Pressed,
+//     Released,
+// }
 
-enum Events {
-    Button(ButtonEvent),
-    TempReading((f32, f32)), // (ambient temperature, vaccine temperature)
-}
+// enum Events {
+//     Button(ButtonEvent),
+//     TempReading((f32, f32)), // (ambient temperature, vaccine temperature)
+// }
 
 struct DualTempSensor<I2C> {
     i2c: I2C,
@@ -60,19 +61,34 @@ impl<I2C> DualTempSensor<I2C>
 where
     I2C: embedded_hal_async::i2c::I2c,
 {
-    pub async fn read_temperature_celsius(&mut self) -> Result<(f32, f32), &str> {
+    pub async fn read_temperature_celsius(&mut self) -> TemperatureSample {
         self.enable_bar.set_low(); // Enable the temperature sensor.
         Timer::after(SENSOR_CONVERSION_TIME).await; // Wait for sensor to stabilize.
         let mut buf = [0u8; 2];
-        self.i2c.write_read(self.amb_address, &[SENSOR_REGISTER], &mut buf).await.or(Err("Failed to read from temperature sensor"))?;
-        let amb_temp = i16::from_be_bytes(buf);
-        self.i2c.write_read(self.vax_address, &[SENSOR_REGISTER], &mut buf).await.or(Err("Failed to read from temperature sensor"))?;
-        let vax_temp = i16::from_be_bytes(buf);
+        let amb_temp  = match self.i2c.write_read(self.amb_address, &[SENSOR_REGISTER], &mut buf).await {
+            Ok(_) => Some(f32::from(i16::from_be_bytes(buf)) * 0.0078125), // Convert to Celsius
+            Err(_) => {
+                warn!("Failed to read from temperature sensor");
+                None
+            }
+        };
+
+        let vax_temp = match self.i2c.write_read(self.vax_address, &[SENSOR_REGISTER], &mut buf).await {
+            Ok(_) => Some(f32::from(i16::from_be_bytes(buf)) * 0.0078125), // Convert to Celsius
+            Err(_) => {
+                warn!("Failed to read from temperature sensor");
+                None
+            }
+        };
+
         self.enable_bar.set_high(); // Disable the temperature sensor.
-        Ok((f32::from(amb_temp) * 0.0078125, f32::from(vax_temp) * 0.0078125)) // Convert to Celsius
+
+        TemperatureSample {
+            ambient: amb_temp,
+            vaccine: vax_temp,
+        }
     }
 }
-
 
 
 #[embassy_executor::main]
@@ -164,20 +180,23 @@ async fn main(spawner: Spawner) {
     warn!("Starting main loop");
 
     loop {
-        match CHANNEL.receive().await {
-            Events::Button(ButtonEvent::Pressed) => {
+        let event = CHANNEL.receive().await;
+        let now = rt_clock.get_timestamp();
+
+        match event {
+            LoggerEvent::DoorEvent(DoorEvent::Opened) => {
                 info!("Button pressed event received");
                 // let then = rtc.now().unwrap();
                 // info!("time: {:?}:{:?}", then.minute(), then.second());
             }
-            Events::Button(ButtonEvent::Released) => {
+            LoggerEvent::DoorEvent(DoorEvent::Closed) => {
                 info!("Button released event received");
             }
-            Events::TempReading(temperature) => {
-                let ts = rt_clock.get_timestamp();
-                info!("Time: {}, TAMB: {} °C, TVC: {} °C", ts.seconds, temperature.0, temperature.1);
-                let ts = rt_clock.get_timestamp();
-                info!("{=str}", ts.create_iso8601_str());
+            LoggerEvent::TemperatureSample(temperature) => {
+                // let ts = rt_clock.get_timestamp();
+                info!("Time: {}, TAMB: {} °C, TVC: {} °C", now.seconds, temperature.ambient, temperature.vaccine);
+                // let ts = rt_clock.get_timestamp();
+                info!("{=str}", now.create_iso8601_str());
             }
         }
 
@@ -185,17 +204,17 @@ async fn main(spawner: Spawner) {
 }
 
 #[embassy_executor::task]
-async fn button(mut btn: ExtiInput<'static>, msg: Sender<'static, ThreadModeRawMutex, Events, 8>) {
+async fn button(mut btn: ExtiInput<'static>, msg: Sender<'static, ThreadModeRawMutex, LoggerEvent, 8>) {
     loop {
         btn.wait_for_falling_edge().await;
-        info!("Button pressed!");
-        msg.send(Events::Button(ButtonEvent::Pressed)).await;
+        info!("Button pressed/door open!");
+        msg.send(LoggerEvent::DoorEvent(DoorEvent::Opened)).await;
         // Debounce delay
         Timer::after(Duration::from_millis(50)).await;
         // Wait for release (rising edge)
         btn.wait_for_rising_edge().await;
-        info!("Button released!");
-        msg.send(Events::Button(ButtonEvent::Released)).await;
+        info!("Button released/door closed!");
+        msg.send(LoggerEvent::DoorEvent(DoorEvent::Closed)).await;
         // Debounce delay
         Timer::after(Duration::from_millis(50)).await;
     }
@@ -214,17 +233,12 @@ async fn led_blink(mut led: Output<'static>) {
 #[embassy_executor::task]
 async fn get_temperature(
     mut temp_sensor: DualTempSensor<I2c<'static, embassy_stm32::mode::Async>>,
-    msg: Sender<'static, ThreadModeRawMutex, Events, 8>,
+    msg: Sender<'static, ThreadModeRawMutex, LoggerEvent, 8>,
 ) {
     let mut ticker = Ticker::every(Duration::from_secs(10)); // Read every 10 seconds
     loop {
-        match temp_sensor.read_temperature_celsius().await {
-            Ok(ftemp) => {
-                // info!("Temperature: {} °C", ftemp);
-                msg.send(Events::TempReading(ftemp)).await;
-            }
-            Err(_) => warn!("Failed to read from temperature sensor"),
-        }
+        let temperatures = temp_sensor.read_temperature_celsius().await;
+        msg.send(LoggerEvent::TemperatureSample(temperatures)).await;
         ticker.next().await;
     }
 }
