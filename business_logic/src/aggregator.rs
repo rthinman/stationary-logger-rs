@@ -1,7 +1,7 @@
 //! This module contains the business logic for aggregating temperature, 
 //! door opening, and power data
 
-use crate::{door::{self, DoorEvent}, logger::{LoggerEvent, TemperatureSample}, timestamp::{Timestamp, TimestampError}};
+use crate::{door::{DoorEvent}, logger::{LoggerEvent, TemperatureSample}, timestamp::{Timestamp, TimestampError}};
 
 // Structs to hold data
 

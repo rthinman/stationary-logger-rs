@@ -4,26 +4,28 @@
 mod fmt;
 mod rtclock;
 
+// Use declarations
+// Core libraries
 use core::f32::consts;
 use core::fmt::Write;
 
+// External libraries
 use arrayvec::ArrayString;
-#[cfg(not(feature = "defmt"))]
-use panic_halt as _;
-use crate::fmt::unwrap;
-use business_logic::{door::DoorEvent, logger::{Logger, LoggerEvent, TemperatureSample}};
-use business_logic::timestamp::Timestamp;
-
 #[cfg(feature = "defmt")]
 use {defmt_rtt as _, panic_probe as _};
-
 use embassy_executor::Spawner;
 use embassy_stm32::{bind_interrupts, exti::ExtiInput, peripherals};
 use embassy_stm32::{gpio::{Level, Output, Pull, Speed}, i2c::{ErrorInterruptHandler, EventInterruptHandler, I2c}, rtc::{Rtc, RtcConfig}, time::Hertz, Config};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Channel, Sender};
 use embassy_time::{Duration, Ticker, Timer};
-use fmt::{info, warn};
+#[cfg(not(feature = "defmt"))]
+use panic_halt as _;
+
+// Internal modules, both this crate and the business logic crate.
+use business_logic::{door::DoorEvent, logger::{Logger, LoggerEvent, TemperatureSample}};
+use business_logic::timestamp::Timestamp;
+use fmt::{info, warn, unwrap};
 use rtclock::{Rtclock};
 
 const AMBIENT_ADDRESS: u8 = 0x45; // I2C address for ambient temperature sensor.
